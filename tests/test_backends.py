@@ -870,53 +870,25 @@ class FakeFFmpegManager:
 
 
 @pytest.mark.asyncio
-async def test_process_audio_non_pcm_closes_ffmpeg_stdin_without_sentinel():
-    from whisperlivekit.audio_processor import AudioProcessor
+async def test_encoded_input_drains_temporary_empty_reads_and_tail_before_eof():
+    from whisperlivekit.audio_input import AudioInput
 
-    processor = object.__new__(AudioProcessor)
-    processor.beg_loop = 1.0
-    processor.is_stopping = False
-    processor.is_pcm_input = False
-    processor.ffmpeg_manager = FakeFFmpegManager()
-    processor.transcription_queue = asyncio.Queue()
-    processor.pcm_buffer = bytearray()
-
-    await processor.process_audio(b"")
-
-    assert processor.is_stopping is True
-    assert processor.ffmpeg_manager.closed is True
-    assert processor.transcription_queue.empty()
-
-
-@pytest.mark.asyncio
-async def test_ffmpeg_reader_drains_stdout_after_stop_before_sentinel():
-    from whisperlivekit.audio_processor import SENTINEL, AudioProcessor
-
-    processor = object.__new__(AudioProcessor)
-    processor.is_stopping = True
-    processor.ffmpeg_manager = FakeFFmpegManager([b"aaaa", None, b"bbbb", b""])
-    processor.max_bytes_per_sec = 160000
-    processor.pcm_buffer = bytearray()
-    processor.transcription_queue = asyncio.Queue()
-    processor.diarization_queue = None
-    processor.translation_queue = None
-    processor.diarization = None
-    processor.translation = None
-    processor.bytes_per_sample = 2
-    seen = []
-
-    async def fake_handle_pcm_data():
-        seen.append(bytes(processor.pcm_buffer))
-        processor.pcm_buffer.clear()
-
-    processor.handle_pcm_data = fake_handle_pcm_data
-
-    await processor.ffmpeg_stdout_reader()
-
-    assert seen == [b"aaaa", b"bbbb"]
-    assert processor.ffmpeg_manager.stopped is True
-    assert await processor.transcription_queue.get() is SENTINEL
-    assert processor.transcription_queue.empty()
+    seen, boundaries = [], []
+    async def on_pcm(chunk):
+        seen.append(chunk)
+    async def on_eof():
+        boundaries.append(sum(len(chunk) for chunk in seen))
+    audio = AudioInput(pcm_input=False, sample_rate=16000, channels=1,
+                       chunk_bytes=3200, max_chunk_bytes=16000,
+                       on_pcm=on_pcm, on_eof=on_eof)
+    audio.decoder = FakeFFmpegManager([b"aaaa", None, b"bbbb", b""])
+    await audio.finish()
+    assert audio.decoder.closed and not boundaries
+    await audio.read()
+    np.testing.assert_array_equal(np.concatenate(seen), np.frombuffer(b"aaaabbbb", dtype="<i2") / 32768.0)
+    assert boundaries == [4] and audio.decoder.stopped
+    await audio.finish()
+    assert boundaries == [4]
 
 
 def test_concatenate_diar_segments_does_not_mutate_stored_segments():
