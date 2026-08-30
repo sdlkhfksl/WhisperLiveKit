@@ -85,6 +85,8 @@ class WhisperLiveKitConfig:
     retention_seconds: Optional[float] = None
     # REST /v1/audio/transcriptions budget; 0 = auto (max(120, 2.5x audio)).
     rest_timeout: float = 0.0
+    max_buffered_audio: float = 30.0
+    backpressure_timeout: float = 30.0
     model_size: str = "base"
     model_cache_dir: Optional[str] = None
     model_dir: Optional[str] = None
@@ -184,6 +186,17 @@ class WhisperLiveKitConfig:
     sortformer_max_speakers: Optional[int] = None
 
     def __post_init__(self):
+        for name in ("max_buffered_audio", "backpressure_timeout"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be finite and positive.")
+            setattr(self, name, value)
+        if self.punctuation_split or self.disable_punctuation_split:
+            logger.warning(
+                "--punctuation-split and --disable-punctuation-split are deprecated "
+                "and have no effect. Speaker turns and --pause-segmentation-seconds "
+                "control transcript boundaries."
+            )
         self.pause_segmentation_seconds = validate_pause_segmentation_seconds(
             self.pause_segmentation_seconds
         )
