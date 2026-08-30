@@ -15,13 +15,13 @@ def _number(value, decimals=2):
 def print_report(report: BenchmarkReport, out: TextIO = sys.stderr) -> None:
     out.write(f"\nWhisperLiveKit benchmark: {report.backend} / {report.model_size}\n")
     out.write(f"Feed speed: {report.feed_speed} (0 = immediate, 1 = real time)\n")
-    out.write(f"{'Sample':<26} {'State':<8} {'WER %':>7} {'ASR RTF':>8} {'Wall s':>8} {'First s':>8}\n")
+    out.write(f"{'Sample':<26} {'State':<8} {'WER/CER%':>8} {'ASR RTF':>8} {'Wall s':>8} {'First s':>8} {'EOF s':>8}\n")
     for result in report.results:
         out.write(
             f"{result.sample_name:<26} {result.status:<8} "
-            f"{_number(result.wer * 100 if result.wer is not None else None):>7} "
+            f"{_number((result.cer if result.cer is not None else result.wer) * 100 if result.cer is not None or result.wer is not None else None):>8} "
             f"{_number(result.rtf, 3):>8} {_number(result.wall_time_s):>8} "
-            f"{_number(result.first_text_time_s):>8}\n"
+            f"{_number(result.first_visible_time_s):>8} {_number(result.finalization_time_s):>8}\n"
         )
         if result.error:
             out.write(f"  {result.error}\n")
@@ -29,8 +29,10 @@ def print_report(report: BenchmarkReport, out: TextIO = sys.stderr) -> None:
             out.write("  Timestamp ordering/bounds require inspection.\n")
     out.write(f"\n{len(report.successful_results)}/{report.n_samples} completed; {report.n_failed} failed.\n")
     out.write(f"Successful samples: weighted WER {_number(report.weighted_wer * 100 if report.weighted_wer is not None else None)}%; ASR RTF {_number(report.overall_rtf, 3)}\n")
+    if report.weighted_cer is not None:
+        out.write(f"Chinese/Japanese character error rate: {report.weighted_cer * 100:.2f}%\n")
     out.write("ASR RTF measures inference calls. Wall time includes audio pacing and EOF drain.\n")
-    out.write("First text is measured only at speed=1; it is not per-word latency.\n")
+    out.write("First visible text is measured only at speed=1; it is not per-word latency. EOF time starts after actual feeding ends.\n")
     out.write("Failed samples are excluded from scores; inspect their records before comparing runs.\n\n")
 
 

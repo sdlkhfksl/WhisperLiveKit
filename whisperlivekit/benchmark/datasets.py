@@ -43,6 +43,8 @@ class BenchmarkSample:
     n_speakers: int = 1
     source: str = ""
     tags: Set[str] = field(default_factory=set)
+    expected_sha256: str = ""
+
 
     def to_dict(self) -> Dict:
         return {
@@ -57,6 +59,17 @@ class BenchmarkSample:
             "source": self.source,
             "tags": list(self.tags),
         }
+
+
+def load_manifest(path, *, continuous=False):
+    """Load a fixed corpus using its recorded cache location and hashes."""
+    manifest = json.loads(Path(path).read_text())
+    root = CACHE_DIR / manifest["cache_subdir"]
+    return [BenchmarkSample(
+        name=row["name"], path=str(root / row["file"]), reference=row["reference"],
+        duration=row["duration"], language=row["language"], category=row["category"],
+        sample_rate=row["sample_rate"], source=row["source"], expected_sha256=row["audio_sha256"],
+    ) for row in manifest["continuous" if continuous else "samples"]]
 
 
 # ---------------------------------------------------------------------------

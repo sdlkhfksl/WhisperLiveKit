@@ -134,3 +134,6 @@ macos/*
 /chrome-extension/live_transcription.css
 /chrome-extension/live_transcription.js
 /chrome-extension/web/
+
+# Local benchmark reports and exploratory figures
+/benchmarks/runs/

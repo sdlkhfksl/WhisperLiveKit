@@ -38,6 +38,12 @@ async def test_benchmark_retains_failures_without_scoring_partial_results(tmp_pa
     assert good.effective_config["pcm_input"] is True
     assert good.wer is None  # no reference is not 0% WER
     assert good.wall_time_s is not None and good.startup_time_s is not None
+    assert good.finalization_time_s is not None and good.feed_time_s is not None
+    tampered = await runner._run_sample(replace(sample, expected_sha256="0"*64), config, compute_wer)
+    assert tampered.status == "error" and "SHA-256" in tampered.error
+    chinese = await runner._run_sample(replace(sample, language="zh", reference="你好。"), config, compute_wer)
+    assert chinese.cer == 1 and chinese.wer is None
+    assert chinese.cer_details["ref_chars"] == 2
 
     async def timeout(*args, **kwargs):
         raise TimeoutError("EOF did not complete")
@@ -66,15 +72,30 @@ async def test_harness_finish_propagates_timeout_and_collector_errors():
     from whisperlivekit.test_harness import TestHarness
     from whisperlivekit.timed_objects import FrontData
 
-    for failure in ("timeout", "error"):
+    for failure in ("timeout", "error", "translation"):
         async with TestHarness(transcription=False, vac=False, pcm_input=True) as harness:
             harness._collect_task.cancel()
             await asyncio.gather(harness._collect_task, return_exceptions=True)
             async def results():
                 if failure == "timeout":
                     await asyncio.Event().wait()
-                yield FrontData(status="error", error="decoder failed")
+                if failure == "translation":
+                    yield FrontData(translation_error="capture failed")
+                else:
+                    yield FrontData(status="error", error="decoder failed")
             harness._results_gen = results()
             harness._collect_task = asyncio.create_task(harness._collect_results())
             with pytest.raises(TimeoutError if failure == "timeout" else RuntimeError):
                 await harness.finish(timeout=.05)
+
+
+def test_float_wav_preserves_audio_amplitude(tmp_path):
+    import numpy as np
+    import soundfile as sf
+
+    from whisperlivekit.test_harness import load_audio_pcm
+
+    path = tmp_path / "float.wav"
+    values = np.array([0, .5, -.5, 1, -1], dtype=np.float32)
+    sf.write(path, values, 16000, subtype="FLOAT")
+    np.testing.assert_array_equal(np.frombuffer(load_audio_pcm(path), dtype="<i2"), [0, 16384, -16384, 32767, -32768])
