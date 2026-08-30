@@ -77,16 +77,19 @@ def _load_audio_pcm_soundfile(audio_path: str, sample_rate: int) -> Optional[byt
     downmixing; those stay ffmpeg's job.
     """
     try:
+        import numpy as np
         import soundfile as sf
     except ImportError:
         return None
     try:
-        data, sr = sf.read(str(audio_path), dtype="int16", always_2d=True)
+        data, sr = sf.read(str(audio_path), dtype="float32", always_2d=True)
     except Exception:
         return None
     if sr != sample_rate or data.shape[1] != 1:
         return None
-    return data[:, 0].tobytes()
+    # libsndfile does not scale floating-point WAV data when reading int16;
+    # normalized recordings would otherwise become almost entirely silence.
+    return np.clip(np.rint(data[:, 0] * 32768), -32768, 32767).astype("<i2").tobytes()
 
 
 def load_audio_pcm(audio_path: str, sample_rate: int = SAMPLE_RATE) -> bytes:
@@ -139,6 +142,7 @@ class TestState:
     audio_position: float = 0.0
     status: str = ""
     error: str = ""
+    translation_error: str = ""
 
     @classmethod
     def from_front_data(cls, front_data: FrontData, audio_position: float = 0.0) -> "TestState":
@@ -155,6 +159,7 @@ class TestState:
             audio_position=audio_position,
             status=d.get("status", ""),
             error=d.get("error", ""),
+            translation_error=d.get("translation_error", ""),
         )
 
     # ── Text accessors ──
@@ -712,6 +717,8 @@ class TestHarness:
             await self._processor.process_audio(b"")
             if self._collect_task:
                 await self._collect_task
+        if self._state.translation_error:
+            raise RuntimeError(self._state.translation_error)
         return self._state
 
     async def cut(self, timeout: float = 5.0) -> TestState:

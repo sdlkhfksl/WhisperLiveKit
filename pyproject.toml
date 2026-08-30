@@ -43,6 +43,8 @@ test = [
     "datasets>=2.14",
     "librosa",
     "deepgram-sdk==7.8.1",
+    "psutil>=5.9",
+    "matplotlib>=3.8",
 ]
 translation = ["nllw"]
 sentence_tokenizer = ["mosestokenizer", "wtpsplit"]
