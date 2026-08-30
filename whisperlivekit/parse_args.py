@@ -169,6 +169,15 @@ def build_parser():
     )
 
     parser.add_argument(
+        "--max-buffered-audio", type=float, default=30.0,
+        help="Maximum pending audio in seconds per processing queue (default: 30).",
+    )
+    parser.add_argument(
+        "--backpressure-timeout", type=float, default=30.0,
+        help="Fail the session if a full processing queue cannot accept work within this many seconds (default: 30).",
+    )
+
+    parser.add_argument(
         "--rest-timeout",
         type=float,
         default=0.0,

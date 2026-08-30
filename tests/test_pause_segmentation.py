@@ -48,6 +48,7 @@ def _silence_processor(threshold: float) -> AudioProcessor:
     processor = object.__new__(AudioProcessor)
     processor.pause_segmentation_seconds = threshold
     processor.sample_rate = 100
+    processor.max_bytes_per_sec = 1000
     processor.total_pcm_samples = 0
     processor.current_silence = Silence(start=1.0, is_starting=True)
     processor.metrics = SessionMetrics()
