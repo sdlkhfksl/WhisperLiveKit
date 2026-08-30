@@ -107,3 +107,115 @@ def test_silent_backend_watchdog_respects_real_output(caplog):
     with caplog.at_level(logging.ERROR, logger="whisperlivekit.audio_processor"):
         AudioProcessor._warn_if_backend_silent(fake, 120.0)
     assert not [r for r in caplog.records if "produced no output" in r.message]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('failure_phase', ['chunk', 'eof'])
+async def test_asr_failure_is_reported_and_keeps_the_last_confirmed_text(monkeypatch, failure_phase):
+    import asyncio
+    from argparse import Namespace
+    from dataclasses import asdict
+
+    import whisperlivekit.audio_processor as processing
+    from whisperlivekit.config import WhisperLiveKitConfig
+    from whisperlivekit.core import TranscriptionEngine
+    from whisperlivekit.timed_objects import ASRToken, Transcript
+
+    class Online:
+        SAMPLING_RATE = 16000
+        asr = SimpleNamespace(sep='')
+        calls = 0
+        end = 0.0
+
+        def insert_audio_chunk(self, audio, end):
+            self.end = end
+
+        def process_iter(self, **kwargs):
+            self.calls += 1
+            if self.calls > 1 and failure_phase == 'chunk':
+                raise RuntimeError('decoder fixture failed')
+            return [ASRToken(start=0, end=self.end, text='Confirmed.')], self.end
+
+        def get_buffer(self):
+            return Transcript(start=self.end, end=self.end, text='')
+
+        def start_silence(self):
+            return [], self.end
+
+        def end_silence(self, duration, offset):
+            self.end += duration
+
+        def finish(self):
+            raise RuntimeError('decoder fixture failed')
+
+    monkeypatch.setattr(processing, 'online_factory', lambda *args, **kwargs: Online())
+    engine = object.__new__(TranscriptionEngine)
+    engine.args = Namespace(**asdict(WhisperLiveKitConfig(vac=False, pcm_input=True, min_chunk_size=0.5, asr_coalesce_min_s=0)))
+    engine.asr = SimpleNamespace()
+    engine.translation_model = None
+    processor = AudioProcessor(transcription_engine=engine)
+    records = []
+    confirmed = asyncio.Event()
+
+    async def collect(generator):
+        async for message in generator:
+            records.append(message)
+            if any(line.text == 'Confirmed.' for line in message.lines):
+                confirmed.set()
+
+    try:
+        consumer = asyncio.create_task(collect(await processor.create_tasks()))
+        await processor.process_audio(b'\x01\x00' * 8000)
+        await asyncio.wait_for(confirmed.wait(), 3)
+        if failure_phase == 'chunk':
+            await processor.process_audio(b'\x01\x00' * 8000)
+        else:
+            await processor.process_audio(b'')
+        await asyncio.wait_for(consumer, 3)
+        assert records[-1].status == 'error'
+        assert 'decoder fixture failed' in records[-1].error
+        assert any(any(line.text == 'Confirmed.' for line in r.lines) for r in records[:-1])
+        assert processor.transcription_queue.closed
+        with pytest.raises(RuntimeError, match='decoder fixture failed'):
+            await processor.process_audio(b'\x01\x00' * 8000)
+        await asyncio.wait_for(processor.transcription_task, 1)
+    finally:
+        await processor.cleanup()
+        if 'consumer' in locals():
+            consumer.cancel()
+            await asyncio.gather(consumer, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_formatter_drains_results_that_finish_during_a_client_send():
+    import asyncio
+    from argparse import Namespace
+    from dataclasses import asdict
+
+    from whisperlivekit.config import WhisperLiveKitConfig
+    from whisperlivekit.core import TranscriptionEngine
+    from whisperlivekit.timed_objects import ASRToken
+
+    engine = object.__new__(TranscriptionEngine)
+    engine.args = Namespace(**asdict(WhisperLiveKitConfig(transcription=False, vac=False, pcm_input=True)))
+    engine.asr = None
+    engine.translation_model = None
+    processor = AudioProcessor(transcription_engine=engine)
+    processor.transcription_task = asyncio.get_running_loop().create_future()
+    processor.state.new_tokens = [ASRToken(start=0, end=1, text='First.')]
+    output = processor.results_formatter()
+    try:
+        first = await anext(output)
+        assert ''.join(line.text for line in first.lines) == 'First.'
+        # A WebSocket send can suspend the consumer while the final ASR call
+        # finishes. That new output must be formatted before the generator ends.
+        processor.state.new_tokens = [ASRToken(start=1, end=2, text=' Last words')]
+        processor.is_stopping = True
+        processor.transcription_task.set_result(None)
+        final = await anext(output)
+        assert 'Last words' in ''.join(line.text for line in final.lines)
+        with pytest.raises(StopAsyncIteration):
+            await anext(output)
+    finally:
+        await output.aclose()
+        await processor.cleanup()
