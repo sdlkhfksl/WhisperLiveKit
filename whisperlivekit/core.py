@@ -457,9 +457,7 @@ def online_factory(args, asr, language=None, context=None):
             asr,
             language,
             context=context,
-            simulstreaming=(
-                getattr(args, "backend_policy", None) == "simulstreaming"
-            ),
+            simulstreaming=isinstance(asr, SimulStreamingASR),
         )
 
     if backend == "qwen3-streaming":
