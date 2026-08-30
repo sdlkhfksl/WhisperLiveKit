@@ -2,8 +2,13 @@
 
 import asyncio
 from time import perf_counter
+from typing import Any, List, Union
 
 import numpy as np
+
+from whisperlivekit.timed_objects import ChangeSpeaker, Silence
+
+SENTINEL = object()
 
 
 class PipelineClosed(RuntimeError):
@@ -110,3 +115,32 @@ class ProcessingQueue(asyncio.Queue):
                 waiter = waiters.popleft()
                 if not waiter.done():
                     waiter.set_exception(PipelineClosed("Audio session is closed."))
+
+
+async def get_all_from_queue(
+    queue: asyncio.Queue,
+) -> Union[object, Silence, ChangeSpeaker, np.ndarray, List[Any]]:
+    items: List[Any] = []
+
+    first_item = await queue.get()
+    queue.task_done()
+    if first_item is SENTINEL:
+        return first_item
+    if isinstance(first_item, (Silence, ChangeSpeaker)):
+        return first_item
+    items.append(first_item)
+
+    while True:
+        if not queue._queue:
+            break
+        next_item = queue._queue[0]
+        if next_item is SENTINEL:
+            break
+        if isinstance(next_item, (Silence, ChangeSpeaker)):
+            break
+        items.append(await queue.get())
+        queue.task_done()
+    if isinstance(items[0], np.ndarray):
+        return np.concatenate(items)
+    else: #translation
+        return items
