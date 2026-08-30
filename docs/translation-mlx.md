@@ -3,6 +3,8 @@
 The `mlx-llm-mt` backend runs a translation model in the WhisperLiveKit process.
 It translates completed sentences and flushes an unfinished sentence at a pause,
 speaker change, or end of stream. It does not translate every partial ASR update.
+The optional [simultaneous mode](simul_mt_calibration.md) can release partial
+translations when a compatible MLX calibration is available.
 
 ```bash
 pip install 'whisperlivekit[mlx-whisper,mlx-llm-mt]'

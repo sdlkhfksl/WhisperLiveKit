@@ -93,7 +93,7 @@ class MlxLlmTranslation:
     segment buffer.
     """
 
-    _MODEL_CACHE: Dict[str, Tuple[Any, Any]] = {}  # repo → (model, tokenizer)
+    _MODEL_CACHE: Dict[tuple, Tuple[Any, Any]] = {}
     # MLX models and tokenizers are shared, including mutable decode caches.
     _MODEL_LOCK = threading.RLock()
 
@@ -169,12 +169,13 @@ class MlxLlmTranslation:
     @classmethod
     def _ensure_model(cls, config: MlxLlmMtModelConfig):
         repo = config.repo
+        key = (repo, config.revision)
         with cls._MODEL_LOCK:
-            if repo not in cls._MODEL_CACHE:
+            if key not in cls._MODEL_CACHE:
                 from mlx_lm import load  # lazy; mlx-lm is an extra
                 logger.info("Loading MT model %s ...", repo)
-                cls._MODEL_CACHE[repo] = load(repo)
-            return cls._MODEL_CACHE[repo]
+                cls._MODEL_CACHE[key] = load(repo, revision=config.revision)
+            return cls._MODEL_CACHE[key]
 
     def _translate_text(self, text: str) -> str:
         with self._MODEL_LOCK:

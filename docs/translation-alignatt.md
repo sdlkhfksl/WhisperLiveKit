@@ -8,7 +8,11 @@ WhisperLiveKit is a client of its `alignatt-mt-server`: WLK handles audio, ASR, 
 
 The translation policy and runtime come from AlignAtt4LLM. The paper evaluates a specific Qwen3-ASR/forced-alignment and Gemma cascade for English to German, Italian, and Chinese. Changing the WLK ASR backend, hardware, or buffering creates a different configuration; the paper's latency and quality results do not automatically transfer to it.
 
-For citation metadata, see [the README citation](../README.md#research-and-citation) and [the paper](https://arxiv.org/abs/2606.03967).
+For citation metadata, see [AlignAtt4LLM's citation file](https://github.com/QuentinFuxa/Alignatt4LLM/blob/main/CITATION.cff) and [the paper](https://arxiv.org/abs/2606.03967).
+
+An optional [MLX implementation](simul_mt_calibration.md) runs translation locally
+on Apple Silicon. Its calibrations and measurements are specific to that runtime;
+the remote server remains a separate backend with its own supported models.
 
 ## Start the translation server
 

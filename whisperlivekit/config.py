@@ -56,6 +56,14 @@ class WhisperLiveKitConfig:
     translation_backend: str = "nllb"
     alignatt_url: str = "ws://localhost:8765"
     mlx_llm_mt_model: str = "hy-mt2-1.8b-8bit"
+    # Simultaneous-MT variant of mlx-llm-mt: drafts over the unstable ASR tail
+    # with the AlignAtt commit policy and a compatible MLX calibration.
+    mlx_llm_mt_simultaneous: bool = False
+    mlx_llm_mt_calibration: Optional[str] = None
+    mlx_llm_mt_simul_commit: str = "paper"  # paper | mass | argmax
+    mlx_llm_mt_simul_mass_threshold: float = 0.5
+    mlx_llm_mt_simul_soft_max_s: float = 4.0
+    mlx_llm_mt_simul_hard_max_s: float = 20.0
     alignatt_preset: Optional[str] = None
     # quality | balanced | low; see docs/translation-alignatt.md
     alignatt_latency: str = "balanced"

@@ -1,6 +1,7 @@
 """Local MT lifecycle through the same worker used by WebSocket sessions."""
 
 import asyncio
+import json
 import sys
 from types import SimpleNamespace
 
@@ -8,6 +9,117 @@ import pytest
 
 from whisperlivekit.timed_objects import ASRToken, ChangeSpeaker, Silence, State
 from whisperlivekit.translation_mlx_llm_mt import MlxLlmTranslation
+
+
+def _test_calibration(tmp_path):
+    engine = MlxLlmTranslation(source_language="en", target_language="zh", warmup=False)
+    data = {
+        "model": engine._config.repo, "direction": "en-zh", "num_layers": 2, "num_heads": 4,
+        "used_pairs": 100, "token_alignment_heads": [
+            {"layer": layer, "head": head, "ts": 0.5} for layer in range(2) for head in range(4)
+        ],
+        "promotion_gate": {"eligible_for_promotion": True},
+        "stability_checks": [{"stable_vs_full": True, "max_abs_ts_delta_vs_full": 0.01}] * 3,
+        "runtime": {"backend": "mlx-lm", "model_revision": "a" * 40, "source_sha256": "0" * 64,
+                    "quantization": {"bits": 8}, "prompt": engine._prompt},
+    }
+    path = tmp_path / "heads.json"
+    path.write_text(json.dumps(data))
+    return path
+
+
+def test_simultaneous_requires_matching_calibration_and_keeps_session_options(tmp_path):
+    from whisperlivekit.translation_mlx_llm_mt_simul import MlxLlmTranslationSimul
+
+    with pytest.raises(ValueError, match="calibration"):
+        MlxLlmTranslationSimul(source_language="fr", target_language="en", warmup=False)
+    path = _test_calibration(tmp_path)
+    engine = MlxLlmTranslationSimul(source_language="en", target_language="zh", warmup=False,
+                                   calibration_file=path, simul_soft_max_s=1.25, simul_hard_max_s=7)
+    session = engine.new_session()
+    assert (session._simul_soft_max_s, session._simul_hard_max_s) == (1.25, 7)
+    assert session._config.revision == "a" * 40
+    with pytest.raises(ValueError, match="direction"):
+        engine.new_session("fr")
+    data = json.loads(path.read_text())
+    data["model"] = "unrelated/Hy-MT2-1.8B-8bit"
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="exact model"):
+        engine.new_session()
+
+
+@pytest.mark.asyncio
+async def test_simultaneous_partial_failure_pause_and_eof(tmp_path, monkeypatch):
+    from whisperlivekit.audio_processor import SENTINEL, AudioProcessor
+    from whisperlivekit.timed_objects import HypothesisTail
+    from whisperlivekit.translation_mlx_llm_mt_simul import MlxLlmTranslationSimul
+
+    engine = MlxLlmTranslationSimul(source_language="en", target_language="zh", warmup=False,
+                                   calibration_file=_test_calibration(tmp_path))
+    monkeypatch.setattr(engine, "_translate_simul", lambda source, committed: "您好")
+    monkeypatch.setattr(engine, "_translate_text", lambda text: text.upper())
+    engine.insert_tokens([ASRToken(0, 1, "Hello"), HypothesisTail(1, 2, "world")])
+    _, buffer = engine.process()
+    assert buffer.text == "您好"
+
+    def unavailable(*args):
+        raise RuntimeError("missing attention")
+
+    monkeypatch.setattr(engine, "_translate_simul", unavailable)
+    engine.insert_tokens([ASRToken(1, 2, "world")])
+    _, buffer = engine.process()
+    assert buffer.text == "您好" and "missing attention" in engine.error
+    processor = SimpleNamespace(translation_queue=asyncio.Queue(), translation=engine,
+                                state=State(), lock=asyncio.Lock())
+    for event in [Silence(start=2, end=3, is_starting=True, has_ended=True),
+                  ASRToken(3, 7, "One."), ASRToken(7, 11, "Two."), ASRToken(11, 12, "Tail"), SENTINEL]:
+        await processor.translation_queue.put(event)
+    await asyncio.wait_for(AudioProcessor.translation_processor(processor), 5)
+    assert " ".join(part.text for part in processor.state.new_translation) == "HELLO WORLD ONE. TWO. TAIL"
+    assert not processor.state.new_translation_buffer.text and not engine.error
+    assert engine.finish()[0] is None
+
+
+def test_capture_cached_prefill_isolation_and_missing_attention():
+    mx = pytest.importorskip("mlx.core")
+    pytest.importorskip("mlx_lm")
+    import numpy as np
+    from mlx_lm.models.cache import make_prompt_cache
+    from mlx_lm.models.hunyuan_v1_dense import Model, ModelArgs
+
+    from whisperlivekit.simul_mt_capture import apply_commit_policy, capture_attention, snapshot_capture
+
+    mx.random.seed(4)
+    args = ModelArgs(model_type="hunyuan_v1_dense", vocab_size=32, hidden_size=32, num_hidden_layers=2,
+                     intermediate_size=64, num_attention_heads=4, num_key_value_heads=2, rms_norm_eps=1e-6)
+    model = Model(args)
+    ids = mx.array([[1, 2, 3, 4, 5]])
+    full = np.array(model(ids))
+    cache = make_prompt_cache(model)
+    mx.eval(model(ids[:, :3], cache=cache))
+    originals = [layer.self_attn for layer in model.model.layers]
+    heads = ((0, 1), (1, 2))
+    with capture_attention(model, heads, target_start=3) as capture:
+        actual = np.array(model(ids[:, 3:], cache=cache))
+        snapshot = snapshot_capture(capture)
+    np.testing.assert_allclose(actual, full[:, 3:], rtol=1e-5, atol=1e-5)
+    for entries in snapshot.values():
+        assert entries[0].query_start == 3
+        weights = entries[0].weights
+        assert weights[0, 4] == 0 and np.all(weights[0, :4] > 0)
+        assert np.all(weights[1, :5] > 0)
+        assert not weights.flags.writeable
+    before = snapshot[(0, 1)][0].weights.copy()
+    with pytest.raises(RuntimeError, match="interrupted"):
+        with capture_attention(model, [(0, 2)]) as other:
+            mx.eval(model(ids))
+            assert set(other) == {(0, 2)}
+            raise RuntimeError("interrupted")
+    assert all(original is layer.self_attn for original, layer in zip(originals, model.model.layers))
+    np.testing.assert_array_equal(snapshot[(0, 1)][0].weights, before)
+    assert apply_commit_policy(snapshot, heads, 2, 3, 0, 3, 3) == 2
+    with pytest.raises(RuntimeError, match="Missing alignment"):
+        apply_commit_policy({}, heads, 2, 3, 0, 3, 0)
 
 
 @pytest.mark.asyncio
@@ -210,4 +322,3 @@ def test_early_stop_does_not_affect_clean_output(monkeypatch):
 
     assert out == "Hello world"
     assert len(consumed) == 2
-

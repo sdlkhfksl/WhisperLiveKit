@@ -891,6 +891,20 @@ def build_parser():
         dest="mlx_llm_mt_model",
     )
     translation_group.add_argument(
+        "--simultaneous",
+        action="store_true",
+        default=False,
+        help="Enable the simultaneous-MT variant of --translation-backend "
+        "mlx-llm-mt: drafts translation over the unstable ASR tail and "
+        "commits target tokens via the AlignAtt attention policy. Requires "
+        "a bundled or explicit calibration matching the model and direction.",
+        dest="mlx_llm_mt_simultaneous",
+    )
+    translation_group.add_argument(
+        "--mlx-llm-mt-calibration",
+        help="An AlignAtt4LLM head JSON with MLX provenance, or a directory (default: bundled calibrations).",
+    )
+    translation_group.add_argument(
         "--alignatt-url",
         type=str,
         default="ws://localhost:8765",
