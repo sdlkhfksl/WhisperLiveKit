@@ -13,7 +13,7 @@ same settings as the CLI.
 | `--language` | Source language; coverage depends on the backend | `auto` |
 | `--backend-policy` | Whisper streaming policy: `simulstreaming` or `localagreement` | `simulstreaming` |
 | `--target-language` | Enable translation to this language | disabled |
-| `--translation-backend` | `nllb` or the [AlignAtt4LLM server](translation-alignatt.md) | `nllb` |
+| `--translation-backend` | `nllb`, the [AlignAtt4LLM server](translation-alignatt.md), or [local MLX translation](translation-mlx.md) | `nllb` |
 | `--diarization` | Attribute words to speakers | disabled |
 | `--pause-segmentation-seconds` | Split after a VAD pause longer than this threshold; `0` disables it | `5.0` |
 | `--asr-coalesce-min-s` | Accumulate new audio before inference; trades update cadence for fewer calls | `0` |

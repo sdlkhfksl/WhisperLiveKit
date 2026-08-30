@@ -29,6 +29,10 @@ def session_translation_factory(args, translation_model, target_language, source
         # target degrades to empty translation output with one warning.
         return translation_model.new_session(target_language, source_language)
 
+    from whisperlivekit.translation_mlx_llm_mt import MlxLlmTranslation
+    if isinstance(translation_model, MlxLlmTranslation):
+        return translation_model.new_session(target_language, source_language)
+
     from nllw import OnlineTranslation
 
     from whisperlivekit.core import _nllw_language_code

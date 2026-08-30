@@ -943,7 +943,6 @@ class AudioProcessor:
                         )
                     if item.has_ended:
                         self.translation.insert_silence(item.duration)
-                        continue
                 elif isinstance(item, ChangeSpeaker):
                     new_translation, new_translation_buffer = await asyncio.to_thread(
                         self.translation.validate_buffer_and_reset
@@ -965,6 +964,7 @@ class AudioProcessor:
             except Exception as e:
                 logger.warning(f"Exception in translation_processor: {e}")
                 logger.warning(f"Traceback: {traceback.format_exc()}")
+                self.translation.error = f"Translation incomplete: {e}"
                 if item is SENTINEL:
                     break
         logger.info("Translation processor task finished.")
