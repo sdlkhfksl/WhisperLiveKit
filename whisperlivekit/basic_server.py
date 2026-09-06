@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from whisperlivekit import AudioProcessor, TranscriptionEngine, get_inline_ui_html, parse_args
 from whisperlivekit.api_auth import websocket_token
 from whisperlivekit.config import WhisperLiveKitConfig, parse_cors_origins
+from whisperlivekit.processing_queue import PipelineClosed, PipelineOverloaded
 from whisperlivekit.timed_objects import FrontData
 from whisperlivekit.timed_objects import format_subtitle_timestamp as _srt_timestamp
 
@@ -169,7 +170,10 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.error(f"Unexpected error in websocket_endpoint main loop: {e}", exc_info=True)
         try:
-            await websocket.send_json({"type": "error", "error": "Unable to process audio."})
+            await websocket.send_json({
+                "type": "error",
+                "error": getattr(audio_processor, "overload_error", None) or "Unable to process audio.",
+            })
             await websocket.close(code=1011, reason="transcription failed")
         except Exception:
             logger.debug("WebSocket was already disconnected", exc_info=True)
@@ -538,7 +542,10 @@ async def create_transcription(
         nonlocal final_result
         async for result in results_gen:
             if result.status == "error":
-                raise HTTPException(status_code=500, detail=result.error or "Transcription failed")
+                raise HTTPException(
+                    status_code=503 if getattr(processor, "overload_error", None) else 500,
+                    detail=result.error or "Transcription failed",
+                )
             final_result = result
 
     # The feed/drain budget scales with the audio length
@@ -561,6 +568,9 @@ async def create_transcription(
                     await collect_task  # propagate errors while feeding
             await processor.process_audio(b"")
             await collect_task
+    except (PipelineClosed, PipelineOverloaded) as exc:
+        message = getattr(processor, "overload_error", None)
+        raise HTTPException(status_code=503 if message else 500, detail=message or str(exc)) from exc
     except asyncio.TimeoutError:
         timed_out = True
         logger.warning(
