@@ -211,8 +211,32 @@ async def test_full_pipeline_timeout_and_cleanup_release_blocked_feeds(engine):
             await asyncio.gather(producer, return_exceptions=True)
             await processor.cleanup()
 
+    if shutil.which("ffmpeg"):
+        # Encoded input can block on FFmpeg stdin while decoded output waits
+        # on a full queue. Overload must release that writer as well.
+        processor = AudioProcessor(transcription_engine=engine, pcm_input=False)
+        processor.transcription_queue.timeout = .05
+        assert await processor.ffmpeg_manager.start()
+        process = processor.ffmpeg_manager.process
+        reader = asyncio.create_task(processor.ffmpeg_stdout_reader())
+        processor.all_tasks_for_cleanup.append(reader)
+        producer = asyncio.create_task(processor.process_audio(_wav(bytes(32000 * 30))))
+        try:
+            async with asyncio.timeout(5):
+                await producer
+                await reader
+            assert processor.overload_error and "backlog" in processor.overload_error
+            assert process.returncode is not None
+            assert processor.ffmpeg_manager.process is None
+        finally:
+            producer.cancel()
+            await asyncio.gather(producer, return_exceptions=True)
+            await processor.cleanup()
+
 
 def test_overload_reaches_http_and_websocket_clients(engine, monkeypatch):
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg required for REST audio conversion")
     from fastapi.testclient import TestClient
     from starlette.websockets import WebSocketDisconnect
 

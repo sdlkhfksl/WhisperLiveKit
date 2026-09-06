@@ -548,6 +548,9 @@ class AudioProcessor:
                 cancelled = True
                 break
             except (PipelineClosed, PipelineOverloaded):
+                # Encoded input may still be blocked in stdin.drain(). Reap
+                # the decoder now so that producer can reach session cleanup.
+                await self.ffmpeg_manager.stop()
                 return
             except Exception as e:
                 logger.warning(f"Exception in ffmpeg_stdout_reader: {e}")
