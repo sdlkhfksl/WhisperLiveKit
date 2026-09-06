@@ -17,6 +17,8 @@ same settings as the CLI.
 | `--diarization` | Attribute words to speakers | disabled |
 | `--pause-segmentation-seconds` | Split after a VAD pause longer than this threshold; `0` disables it | `5.0` |
 | `--asr-coalesce-min-s` | Accumulate new audio before inference; trades update cadence for fewer calls | `0` |
+| `--max-buffered-audio` | Maximum queued audio, in seconds, per ASR/diarization stage | `30` |
+| `--backpressure-timeout` | Maximum wait for room in a processing queue, in seconds | `30` |
 | `--pcm-input` | Accept mono 16 kHz signed 16-bit little-endian PCM and bypass FFmpeg | disabled |
 | `--api-token` | Require authentication; falls back to `WLK_API_TOKEN` | unset |
 | `--cors-origins` | Comma-separated browser origins allowed to call the API | none |
@@ -55,9 +57,23 @@ including feeding and final drainage, is `max(120 seconds, 2.5 × audio duration
 `--rest-timeout N` sets each phase's budget to N seconds. Timeout returns HTTP 408;
 cancellation and errors close the processor's tasks and conversion process.
 
-These limits do not establish a server-wide concurrency capacity. Full-history
-sessions and pending audio still consume memory; measure your workload and
-limit concurrent sessions at deployment. See [deployment.md](deployment.md).
+Pending audio is bounded independently in the ASR and diarization queues.
+When a queue is full, audio ingestion waits for room instead of dropping
+samples. Processing queues also hold at most 256 items, including silence and
+speaker boundaries; the translation queue uses this item limit. A queue that
+cannot accept work within `--backpressure-timeout` ends the session with an
+explicit error (HTTP 503 for REST; an error message followed by close code 1011
+for WebSocket). Increase the timeout for slow models or long inference calls.
+Both settings must be finite and positive.
+
+`SESSION_METRICS` logs include `peak_queued_audio_s` (the largest audio queue)
+and `backpressure_wait_s` (cumulative producer wait across processing queues).
+They exclude the batch currently being processed and are not word latency.
+
+These bounds do not cap all process memory: model buffers, an incoming network
+message, REST uploads, translation-backend history and full transcript history
+have their own lifetimes. Measure the workload and limit concurrent sessions
+at deployment. See [deployment.md](deployment.md).
 
 ## Embedding the server
 
