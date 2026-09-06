@@ -895,6 +895,7 @@ async def test_ffmpeg_reader_drains_stdout_after_stop_before_sentinel():
     processor = object.__new__(AudioProcessor)
     processor.is_stopping = True
     processor.ffmpeg_manager = FakeFFmpegManager([b"aaaa", None, b"bbbb", b""])
+    processor.max_bytes_per_sec = 160000
     processor.pcm_buffer = bytearray()
     processor.transcription_queue = asyncio.Queue()
     processor.diarization_queue = None
